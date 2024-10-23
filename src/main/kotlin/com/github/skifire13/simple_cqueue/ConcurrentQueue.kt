@@ -8,10 +8,10 @@ class ConcurrentQueue<T> {
         internal val next: AtomicRef<Node<T>?> = atomic(null)
     }
 
-    // Head of the queue. This will be read non-atomically by the (unique) consumer.
+    // Head of the queue. This will be updated atomically by the (concurrent) consumers.
     // This always lags behind the actual head by one, meaning the actual head is head.next.
-    // This also always has elem == null, and is the only node where elem is null.
-    private var head: Node<T>
+    // This node is also the only one that can have elem == null.
+    private val head: AtomicRef<Node<T>>
     // "Tail" of the queue. This will be updated atomically by the (concurrent) producers.
     // This is always guaranteed to be _some_ node of the queue, but not necessarily the last one.
     private val tail: AtomicRef<Node<T>>
@@ -19,7 +19,7 @@ class ConcurrentQueue<T> {
     init {
         // Initially both head and tail point to the same node with no element.
         val node = Node<T>(null)
-        head = node
+        head = atomic(node)
         tail = atomic(node)
     }
 
@@ -52,19 +52,28 @@ class ConcurrentQueue<T> {
     }
 
     fun pop(): T? {
-        // `this.head` always lags behind by one element, the actual head is pointed by its `next` field.
-        // If that's null there's no node in the queue, hence no element to pop, and we return null.
-        val next = this.head.next.value ?: return null
+        // Load the head node for the first time.
+        // This will later be updated in the loop if the pop fails.
+        var head = this.head.value
 
-        // If `next` is not null then we can pop it.
-        // This is guaranteed to not be null because only `this.head` has `elem` = null
-        val elem = next.elem!!
-        // Update `this.head` to the new one-before-the-actual-head node.
-        this.head = next
-        // Replace `next.elem` with null since it is not the head.
-        // This will avoid leaking it if the queue is not popped anymore for some time.
-        this.head.elem = null
+        while (true) {
+            // `this.head` always lags behind by one element, the actual head is pointed by its `next` field.
+            // If that's null there's no node in the queue, hence no element to pop, and we return null.
+            val next = head.next.value ?: return null
 
-        return elem
+            // If `next` is not null then we can pop it.
+            if (this.head.compareAndSet(head, next)) {
+                // This is guaranteed to not be null because only `this.head` has `elem` = null,
+                // and since we're the ones that popped it no other thread can set it to null.
+                val elem = next.elem!!
+                // Replace `next.elem` with null since it is not the head.
+                // This will avoid leaking it if the queue is not popped anymore for some time.
+                next.elem = null
+                return elem
+            } else {
+                // Otherwise update `head` and retry
+                head = next
+            }
+        }
     }
 }

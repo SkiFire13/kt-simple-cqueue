@@ -12,14 +12,26 @@ class ConcurrentQueueTest {
     @Operation
     fun push(e: Int) = queue.push(e)
 
-    @Operation(nonParallelGroup = "consumer")
+    @Operation
     fun pop() = queue.pop()
 
-    @Operation(nonParallelGroup = "consumer")
+    @Test
+    fun stressTest() = StressOptions().check(this::class)
+
+    @Test
+    fun modelCheckingTest() = ModelCheckingOptions()
+        .checkObstructionFreedom()
+        .check(this::class)
+}
+
+class ConcurrentQueueVisibleTest {
+    private val queue = ConcurrentQueue<Int>()
+
+    @Operation
     fun pushVisible() {
         queue.push(0)
         // After a push we are guaranteed to see at least one element in the queue.
-        // i.e. it is never the case that a push from some other thread is preventing
+        // i.e. it is never the case that a push from some another thread is preventing
         // a push that has already returned from being visible.
         assert(queue.pop() != null);
     }
